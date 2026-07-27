@@ -398,7 +398,7 @@ Level 5 将 `on` 替换为 `o_n`，Level 6 过滤了 `on` 和 `href` 等关键�
 |------|----------|---------|----------|
 | Level 5 | `on` → `o_n` | `<a href="javascript:alert(1)">click</a>` | 换思路，不用事件属性，改用 `<a>` 标签的 `javascript:` 伪协议 |
 | Level 6 | 过滤 `on`、`href` 等 | `" Onclick=alert(1)` | 大写 `On` 绕过小写关键字匹配 |
-| Level 7 | 过滤 `on`（所有大小写） | `" ONclick=alert(1)` | 双写思路：如果过滤是替换为空，`OONN` → 过滤 → `ON` |
+| Level 7 | 过滤 `on`（所有大小写） | `" oonnclick=alert(1)` | 双写思路：如果过滤是替换为空，`OONN` → 过滤 → `ON` |
 
 > **面试提示**：面试官若问"on被过滤了怎么办"，先答**大小写**（`On`/`ON`），再答**换思路**（用 `<a href="javascript:">` 等其他标签），最后答**其他事件**（`onfocus` + `autofocus` 无需点击）。
 
