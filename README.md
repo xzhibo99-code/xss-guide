@@ -50,6 +50,8 @@ XSS（Cross-Site Scripting，跨站脚本攻击）是一种将恶意脚本注入
 
 **DOM型 vs 前两者的区别**：DOM型XSS的payload全程不经过服务端，纯粹由前端JS从 `document.location` / `document.referrer` 等来源取值后写入DOM。因此服务端访问日志中看不到任何攻击痕迹，这也是它难以检测的原因。
 
+![三种XSS类型数据流对比](images/xss-three-types.png)
+
 ### 1.3 产生原因
 
 XSS的根本原因归结为两点：**将不可信数据拼入HTML页面**是直接原因，**未做输出编码**是深层原因。
@@ -199,6 +201,8 @@ XSS的绕过本质上是**和过滤规则的对抗**。下面是最常见的四�
 %3Cscript%3Ealert(1)%3C/script%3E
 ```
 
+![XSS三种编码的解码时机对比](images/decoding-timeline.png)
+
 #### 替代语法绕过
 
 ```html
@@ -227,6 +231,8 @@ XSS防护是**三层防线**：输出编码是根本，CSP+HttpOnly削减危害�
 | JavaScript中 | `\xHH` 或 JSON.stringify | 避免将用户输入直接拼入 `<script>` |
 | URL中 | URL编码 | `encodeURIComponent()` |
 | CSS中 | CSS编码 | 避免将用户输入用于CSS |
+
+![输出编码上下文决策树](images/output-encoding-tree.png)
 
 ```php
 // PHP：根据上下文选择编码函数
@@ -479,6 +485,8 @@ URL参数 `t_sort` 的值被拼入 `value` 属性。
 ### 3.5 HTTP头注入（Level 11 ~ Level 13）
 
 这三关将注入位置从URL参数转移到了HTTP请求头。核心理解：**服务端读取HTTP头并输出到HTML时，如果未做过滤，HTTP头就成了注入通道。**
+
+![HTTP头注入到XSS的数据流](images/http-header-injection.png)
 
 **源码分析（通用模式）：**
 
